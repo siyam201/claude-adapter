@@ -185,22 +185,25 @@ function convertMessage(
 ): OpenAIMessage[] {
     const result: OpenAIMessage[] = [];
 
+    // Skip messages with missing content.
+    // Some Claude Code message types (e.g., session-start hook attachments) may
+    // have a valid role but no content.
+    if (msg.content === undefined || msg.content === null) {
+        return result;
+    }
+
     if (typeof msg.content === 'string') {
         // Simple string content
         if (msg.role === 'user') {
             result.push({ role: 'user', content: msg.content });
         } else {
-            // Skip assistant prefill messages (e.g., "{" for JSON output)
-            // These are Anthropic-specific and cause 400 errors with other providers
+            // Unknown roles are treated as assistant — this provides forward
+            // compatibility when Claude Code introduces new message types.
             if (isAssistantPrefill(msg.content)) {
                 return result; // Return empty - skip this message
             }
             result.push({ role: 'assistant', content: msg.content });
         }
-    } else if (!msg.content) {
-        // Missing or null content — skip the message entirely.
-        // Some Claude Code message types (e.g., hook attachments) may have no content.
-        return result;
     } else {
         // Array of content blocks
         if (msg.role === 'user') {
