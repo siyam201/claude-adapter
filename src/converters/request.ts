@@ -94,6 +94,15 @@ export function convertRequestToOpenAI(
         messages.push(...converted);
     }
 
+    // Ensure at least one message survived conversion. If all input messages had
+    // missing content (e.g., only hook injections), the resulting array would be
+    // empty and the upstream provider would reject it with a cryptic error.
+    if (messages.length === 0) {
+        throw new Error(
+            'No messages after conversion — all input messages had missing content'
+        );
+    }
+
     // Azure OpenAI enforces strict validation on max_tokens.
     // Claude Code uses max_tokens: 1 for prompt caching optimization,
     // but this causes 400 errors with Azure OpenAI. Convert to 32 to allow
@@ -197,8 +206,10 @@ function convertMessage(
         if (msg.role === 'user') {
             result.push({ role: 'user', content: msg.content });
         } else {
-            // Unknown roles are treated as assistant — this provides forward
-            // compatibility when Claude Code introduces new message types.
+            // Skip assistant prefill messages (e.g., "{" for JSON output).
+            // These are Anthropic-specific and cause 400 errors with other providers.
+            // Note: unknown roles also fall into this branch and are treated as assistant
+            // for forward compatibility when Claude Code introduces new message types.
             if (isAssistantPrefill(msg.content)) {
                 return result; // Return empty - skip this message
             }
