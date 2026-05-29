@@ -99,7 +99,7 @@ export function convertRequestToOpenAI(
     // empty and the upstream provider would reject it with a cryptic error.
     if (messages.length === 0) {
         throw new Error(
-            'No messages after conversion — all input messages had missing content'
+            'No messages after conversion: all input messages had missing content'
         );
     }
 
