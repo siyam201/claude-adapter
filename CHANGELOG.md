@@ -6,6 +6,25 @@ The format follows **Keep a Changelog** and this project adheres to **Semantic V
 
 ---
 
+## [2.1.2] — 2026-05-30
+
+### Fixed
+
+- **Logger**: Fixed simple info logging to serialize metadata on a single line for compatibility with line-oriented log collectors while ensuring consistent cyan console coloring.
+- **Logger**: Resolved non-actionable logger debug comments.
+- **Streaming**: Enhanced streaming tests to strictly verify that `input_tokens` is omitted from the `message_delta` event's usage object.
+
+### Performance
+
+- **Metadata**: Implemented an in-memory cache for `loadMetadata` to eliminate redundant synchronous disk reads, reducing lookup times from ~160ms to ~1ms.
+- **XML Mode**: Switched to array accumulation and join for XML-mode user content formatting to ensure efficient O(N) allocation.
+
+### Refactored
+
+- **UI Module**: Refactored the `UI` module to use the central logger instead of standard `console.log`.
+
+---
+
 ## [2.1.1] — 2026-04-20
 
 ### Fixed
