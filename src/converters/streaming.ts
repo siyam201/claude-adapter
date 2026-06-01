@@ -1,10 +1,7 @@
 // Streaming converter: OpenAI SSE → Anthropic SSE
 import { FastifyReply } from 'fastify';
 import { Stream } from 'openai/streaming';
-import {
-    AnthropicMessageResponse,
-    AnthropicUsage,
-} from '../types/anthropic';
+import { AnthropicMessageResponse, AnthropicUsage } from '../types/anthropic';
 import { OpenAIStreamChunk, OpenAIStreamToolCall } from '../types/openai';
 import { generateToolUseId } from './tools';
 import { recordUsage } from '../utils/tokenUsage';
@@ -12,347 +9,346 @@ import { recordError } from '../utils/errorLog';
 
 // Global counter and set for unique tool IDs within this process
 let toolIdCounter = 0;
-const usedToolIds = new Set<string>();
+export const usedToolIds = new Set<string>();
 
-function generateUniqueToolId(): string {
-    let id: string;
-    do {
-        toolIdCounter++;
-        const timestamp = Date.now().toString(36);
-        const counter = toolIdCounter.toString(36).padStart(4, '0');
-        const random = Math.random().toString(36).substring(2, 10);
-        id = `call_${timestamp}_${counter}_${random}`;
-    } while (usedToolIds.has(id));
+export function generateUniqueToolId(): string {
+  let id: string;
+  do {
+    toolIdCounter++;
+    const timestamp = Date.now().toString(36);
+    const counter = toolIdCounter.toString(36).padStart(4, '0');
+    const random = Math.random().toString(36).substring(2, 10);
+    id = `call_${timestamp}_${counter}_${random}`;
+  } while (usedToolIds.has(id));
 
-    usedToolIds.add(id);
+  usedToolIds.add(id);
 
-    // Clean up old IDs periodically to prevent memory leak (keep last 10000)
-    if (usedToolIds.size > 10000) {
-        const idsArray = Array.from(usedToolIds);
-        for (let i = 0; i < 5000; i++) {
-            usedToolIds.delete(idsArray[i]);
-        }
+  // Clean up old IDs periodically to prevent memory leak (keep last 10000)
+  if (usedToolIds.size > 10000) {
+    const idsArray = Array.from(usedToolIds);
+    for (let i = 0; i < 5000; i++) {
+      usedToolIds.delete(idsArray[i]);
     }
+  }
 
-    return id;
+  return id;
 }
 
 interface StreamingState {
-    messageId: string;
-    model: string;
-    responseModel: string;
-    provider: string;
-    contentBlockIndex: number;
-    currentToolCalls: Map<number, {
-        id: string;
-        name: string;
-        arguments: string;
-        blockIndex: number;
-    }>;
-    inputTokens: number;
-    outputTokens: number;
-    cachedInputTokens: number;
-    hasStarted: boolean;
-    textContent: string;
-    textBlockOpen: boolean;
+  messageId: string;
+  model: string;
+  responseModel: string;
+  provider: string;
+  contentBlockIndex: number;
+  currentToolCalls: Map<
+    number,
+    {
+      id: string;
+      name: string;
+      arguments: string;
+      blockIndex: number;
+    }
+  >;
+  inputTokens: number;
+  outputTokens: number;
+  cachedInputTokens: number;
+  hasStarted: boolean;
+  textContent: string;
+  textBlockOpen: boolean;
 }
 
 /**
  * Transform OpenAI streaming response to Anthropic SSE format
  */
 export async function streamOpenAIToAnthropic(
-    openaiStream: Stream<OpenAIStreamChunk>,
-    reply: FastifyReply,
-    originalModel: string,
-    provider: string = ''
+  openaiStream: Stream<OpenAIStreamChunk>,
+  reply: FastifyReply,
+  originalModel: string,
+  provider: string = ''
 ): Promise<void> {
-    const state: StreamingState = {
-        messageId: `msg_${Date.now().toString(36)}`,
-        model: originalModel,
-        responseModel: '',
-        provider,
-        contentBlockIndex: 0,
-        currentToolCalls: new Map(),
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedInputTokens: 0,
-        hasStarted: false,
-        textContent: '',
-        textBlockOpen: false,
-    };
+  const state: StreamingState = {
+    messageId: `msg_${Date.now().toString(36)}`,
+    model: originalModel,
+    responseModel: '',
+    provider,
+    contentBlockIndex: 0,
+    currentToolCalls: new Map(),
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    hasStarted: false,
+    textContent: '',
+    textBlockOpen: false,
+  };
 
-    // Access the underlying Node.js response for SSE streaming
-    const raw = reply.raw;
+  // Access the underlying Node.js response for SSE streaming
+  const raw = reply.raw;
 
-    // Set SSE headers
-    raw.setHeader('Content-Type', 'text/event-stream');
-    raw.setHeader('Cache-Control', 'no-cache');
-    raw.setHeader('Connection', 'keep-alive');
-    raw.setHeader('X-Accel-Buffering', 'no');
+  // Set SSE headers
+  raw.setHeader('Content-Type', 'text/event-stream');
+  raw.setHeader('Cache-Control', 'no-cache');
+  raw.setHeader('Connection', 'keep-alive');
+  raw.setHeader('X-Accel-Buffering', 'no');
 
-    try {
-        for await (const chunk of openaiStream) {
-            processChunk(chunk, state, raw);
-        }
-
-        // Send final events
-        finishStream(state, raw);
-    } catch (error) {
-        sendErrorEvent(error as Error, state, raw);
+  try {
+    for await (const chunk of openaiStream) {
+      processChunk(chunk, state, raw);
     }
+
+    // Send final events
+    finishStream(state, raw);
+  } catch (error) {
+    sendErrorEvent(error as Error, state, raw);
+  }
 }
 
-function processChunk(
-    chunk: OpenAIStreamChunk,
-    state: StreamingState,
-    raw: any
-): void {
-    // Update usage if present
-    if (chunk.usage) {
-        state.inputTokens = chunk.usage.prompt_tokens;
-        state.outputTokens = chunk.usage.completion_tokens;
-        state.cachedInputTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
+function processChunk(chunk: OpenAIStreamChunk, state: StreamingState, raw: any): void {
+  // Update usage if present
+  if (chunk.usage) {
+    state.inputTokens = chunk.usage.prompt_tokens;
+    state.outputTokens = chunk.usage.completion_tokens;
+    state.cachedInputTokens = chunk.usage.prompt_tokens_details?.cached_tokens ?? 0;
+  }
+
+  // Capture response model from chunk
+  if (chunk.model && !state.responseModel) {
+    state.responseModel = chunk.model;
+  }
+
+  const choice = chunk.choices[0];
+  if (!choice) return;
+
+  // Send message_start on first chunk
+  if (!state.hasStarted) {
+    sendMessageStart(state, raw);
+    state.hasStarted = true;
+  }
+
+  const delta = choice.delta;
+
+  // Handle text content
+  if (delta.content) {
+    if (!state.textBlockOpen) {
+      sendContentBlockStart(state.contentBlockIndex, 'text', '', raw);
+      state.textBlockOpen = true;
     }
 
-    // Capture response model from chunk
-    if (chunk.model && !state.responseModel) {
-        state.responseModel = chunk.model;
+    state.textContent += delta.content;
+    sendTextDelta(state.contentBlockIndex, delta.content, raw);
+  }
+
+  // Handle tool calls
+  if (delta.tool_calls) {
+    for (const toolCall of delta.tool_calls) {
+      processToolCallDelta(toolCall, state, raw);
+    }
+  }
+
+  // Handle finish reason
+  if (choice.finish_reason) {
+    if (state.textBlockOpen) {
+      sendContentBlockStop(state.contentBlockIndex, raw);
+      state.textBlockOpen = false;
+      state.textContent = '';
+      state.contentBlockIndex++;
     }
 
-    const choice = chunk.choices[0];
-    if (!choice) return;
-
-    // Send message_start on first chunk
-    if (!state.hasStarted) {
-        sendMessageStart(state, raw);
-        state.hasStarted = true;
+    for (const toolCall of state.currentToolCalls.values()) {
+      sendContentBlockStop(toolCall.blockIndex, raw);
     }
-
-    const delta = choice.delta;
-
-    // Handle text content
-    if (delta.content) {
-        if (!state.textBlockOpen) {
-            sendContentBlockStart(state.contentBlockIndex, 'text', '', raw);
-            state.textBlockOpen = true;
-        }
-
-        state.textContent += delta.content;
-        sendTextDelta(state.contentBlockIndex, delta.content, raw);
-    }
-
-    // Handle tool calls
-    if (delta.tool_calls) {
-        for (const toolCall of delta.tool_calls) {
-            processToolCallDelta(toolCall, state, raw);
-        }
-    }
-
-    // Handle finish reason
-    if (choice.finish_reason) {
-        if (state.textBlockOpen) {
-            sendContentBlockStop(state.contentBlockIndex, raw);
-            state.textBlockOpen = false;
-            state.textContent = '';
-            state.contentBlockIndex++;
-        }
-
-        for (const toolCall of state.currentToolCalls.values()) {
-            sendContentBlockStop(toolCall.blockIndex, raw);
-        }
-    }
+  }
 }
 
 function processToolCallDelta(
-    toolCall: OpenAIStreamToolCall,
-    state: StreamingState,
-    raw: any
+  toolCall: OpenAIStreamToolCall,
+  state: StreamingState,
+  raw: any
 ): void {
-    const index = toolCall.index;
+  const index = toolCall.index;
 
-    // Check if this is a new tool call
-    if (!state.currentToolCalls.has(index)) {
-        if (state.textBlockOpen) {
-            sendContentBlockStop(state.contentBlockIndex, raw);
-            state.textBlockOpen = false;
-            state.textContent = '';
-            state.contentBlockIndex++;
-        }
-
-        // IMPORTANT: Use the original OpenAI tool ID to maintain consistency
-        // This ID must match when tool results are sent back
-        // If OpenAI doesn't provide an ID, generate a guaranteed unique one
-        let toolId: string;
-        if (toolCall.id && !usedToolIds.has(toolCall.id)) {
-            toolId = toolCall.id;
-            usedToolIds.add(toolId);
-        } else {
-            toolId = generateUniqueToolId();
-        }
-
-        const blockIndex = state.contentBlockIndex + index;
-        const newToolCall = {
-            id: toolId,
-            name: toolCall.function?.name || '',
-            arguments: '',
-            blockIndex,
-        };
-        state.currentToolCalls.set(index, newToolCall);
-
-        sendContentBlockStart(blockIndex, 'tool_use', newToolCall.name, raw, newToolCall.id);
+  // Check if this is a new tool call
+  if (!state.currentToolCalls.has(index)) {
+    if (state.textBlockOpen) {
+      sendContentBlockStop(state.contentBlockIndex, raw);
+      state.textBlockOpen = false;
+      state.textContent = '';
+      state.contentBlockIndex++;
     }
 
-    // Update tool call data
-    const currentCall = state.currentToolCalls.get(index)!;
-
-    if (toolCall.function?.name) {
-        currentCall.name = toolCall.function.name;
+    // IMPORTANT: Use the original OpenAI tool ID to maintain consistency
+    // This ID must match when tool results are sent back
+    // If OpenAI doesn't provide an ID, generate a guaranteed unique one
+    let toolId: string;
+    if (toolCall.id && !usedToolIds.has(toolCall.id)) {
+      toolId = toolCall.id;
+      usedToolIds.add(toolId);
+    } else {
+      toolId = generateUniqueToolId();
     }
 
-    if (toolCall.function?.arguments) {
-        currentCall.arguments += toolCall.function.arguments;
-        sendInputJsonDelta(currentCall.blockIndex, toolCall.function.arguments, raw);
-    }
+    const blockIndex = state.contentBlockIndex + index;
+    const newToolCall = {
+      id: toolId,
+      name: toolCall.function?.name || '',
+      arguments: '',
+      blockIndex,
+    };
+    state.currentToolCalls.set(index, newToolCall);
+
+    sendContentBlockStart(blockIndex, 'tool_use', newToolCall.name, raw, newToolCall.id);
+  }
+
+  // Update tool call data
+  const currentCall = state.currentToolCalls.get(index)!;
+
+  if (toolCall.function?.name) {
+    currentCall.name = toolCall.function.name;
+  }
+
+  if (toolCall.function?.arguments) {
+    currentCall.arguments += toolCall.function.arguments;
+    sendInputJsonDelta(currentCall.blockIndex, toolCall.function.arguments, raw);
+  }
 }
 
 function sendMessageStart(state: StreamingState, raw: any): void {
-    const event = {
-        type: 'message_start',
-        message: {
-            id: state.messageId,
-            type: 'message',
-            role: 'assistant',
-            content: [],
-            model: state.model,
-            stop_reason: null,
-            stop_sequence: null,
-            usage: {
-                input_tokens: state.inputTokens,
-                output_tokens: state.outputTokens,
-                cache_read_input_tokens: state.cachedInputTokens,
-            },
-        },
-    };
-    sendSSE(event, raw);
+  const event = {
+    type: 'message_start',
+    message: {
+      id: state.messageId,
+      type: 'message',
+      role: 'assistant',
+      content: [],
+      model: state.model,
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: state.inputTokens,
+        output_tokens: state.outputTokens,
+        cache_read_input_tokens: state.cachedInputTokens,
+      },
+    },
+  };
+  sendSSE(event, raw);
 }
 
 function sendContentBlockStart(
-    index: number,
-    type: 'text' | 'tool_use',
-    textOrName: string,
-    raw: any,
-    id?: string
+  index: number,
+  type: 'text' | 'tool_use',
+  textOrName: string,
+  raw: any,
+  id?: string
 ): void {
-    let contentBlock: any;
+  let contentBlock: any;
 
-    if (type === 'text') {
-        contentBlock = { type: 'text', text: '' };
-    } else {
-        contentBlock = {
-            type: 'tool_use',
-            id: id || generateToolUseId(),
-            name: textOrName,
-            input: {},
-        };
-    }
-
-    const event = {
-        type: 'content_block_start',
-        index,
-        content_block: contentBlock,
+  if (type === 'text') {
+    contentBlock = { type: 'text', text: '' };
+  } else {
+    contentBlock = {
+      type: 'tool_use',
+      id: id || generateToolUseId(),
+      name: textOrName,
+      input: {},
     };
-    sendSSE(event, raw);
+  }
+
+  const event = {
+    type: 'content_block_start',
+    index,
+    content_block: contentBlock,
+  };
+  sendSSE(event, raw);
 }
 
 function sendTextDelta(index: number, text: string, raw: any): void {
-    const event = {
-        type: 'content_block_delta',
-        index,
-        delta: {
-            type: 'text_delta',
-            text,
-        },
-    };
-    sendSSE(event, raw);
+  const event = {
+    type: 'content_block_delta',
+    index,
+    delta: {
+      type: 'text_delta',
+      text,
+    },
+  };
+  sendSSE(event, raw);
 }
 
 function sendInputJsonDelta(index: number, partialJson: string, raw: any): void {
-    const event = {
-        type: 'content_block_delta',
-        index,
-        delta: {
-            type: 'input_json_delta',
-            partial_json: partialJson,
-        },
-    };
-    sendSSE(event, raw);
+  const event = {
+    type: 'content_block_delta',
+    index,
+    delta: {
+      type: 'input_json_delta',
+      partial_json: partialJson,
+    },
+  };
+  sendSSE(event, raw);
 }
 
 function sendContentBlockStop(index: number, raw: any): void {
-    const event = {
-        type: 'content_block_stop',
-        index,
-    };
-    sendSSE(event, raw);
+  const event = {
+    type: 'content_block_stop',
+    index,
+  };
+  sendSSE(event, raw);
 }
 
 function finishStream(state: StreamingState, raw: any): void {
-    // Determine stop reason
-    const hasToolCalls = state.currentToolCalls.size > 0;
-    const stopReason = hasToolCalls ? 'tool_use' : 'end_turn';
+  // Determine stop reason
+  const hasToolCalls = state.currentToolCalls.size > 0;
+  const stopReason = hasToolCalls ? 'tool_use' : 'end_turn';
 
-    // Record token usage
-    recordUsage({
-        provider: state.provider,
-        modelName: state.model,
-        model: state.responseModel || undefined,
-        inputTokens: state.inputTokens,
-        outputTokens: state.outputTokens,
-        cachedInputTokens: state.cachedInputTokens || undefined,
-        streaming: true
-    });
+  // Record token usage
+  recordUsage({
+    provider: state.provider,
+    modelName: state.model,
+    model: state.responseModel || undefined,
+    inputTokens: state.inputTokens,
+    outputTokens: state.outputTokens,
+    cachedInputTokens: state.cachedInputTokens || undefined,
+    streaming: true,
+  });
 
-    // Send message_delta
-    const deltaEvent = {
-        type: 'message_delta',
-        delta: {
-            stop_reason: stopReason,
-            stop_sequence: null,
-        },
-        usage: {
-            output_tokens: state.outputTokens,
-            cache_read_input_tokens: state.cachedInputTokens,
-        },
-    };
-    sendSSE(deltaEvent, raw);
+  // Send message_delta
+  const deltaEvent = {
+    type: 'message_delta',
+    delta: {
+      stop_reason: stopReason,
+      stop_sequence: null,
+    },
+    usage: {
+      output_tokens: state.outputTokens,
+      cache_read_input_tokens: state.cachedInputTokens,
+    },
+  };
+  sendSSE(deltaEvent, raw);
 
-    // Send message_stop
-    sendSSE({ type: 'message_stop' }, raw);
+  // Send message_stop
+  sendSSE({ type: 'message_stop' }, raw);
 
-    raw.end();
+  raw.end();
 }
 
 function sendErrorEvent(error: Error, state: StreamingState, raw: any): void {
-    // Record error to file
-    recordError(error, {
-        requestId: state.messageId,
-        provider: state.provider,
-        modelName: state.model,
-        streaming: true
-    });
+  // Record error to file
+  recordError(error, {
+    requestId: state.messageId,
+    provider: state.provider,
+    modelName: state.model,
+    streaming: true,
+  });
 
-    const event = {
-        type: 'error',
-        error: {
-            type: 'api_error',
-            message: error.message,
-        },
-    };
-    sendSSE(event, raw);
-    raw.end();
+  const event = {
+    type: 'error',
+    error: {
+      type: 'api_error',
+      message: error.message,
+    },
+  };
+  sendSSE(event, raw);
+  raw.end();
 }
 
 function sendSSE(data: any, raw: any): void {
-    raw.write(`event: ${data.type}\n`);
-    raw.write(`data: ${JSON.stringify(data)}\n\n`);
+  raw.write(`event: ${data.type}\n`);
+  raw.write(`data: ${JSON.stringify(data)}\n\n`);
 }
