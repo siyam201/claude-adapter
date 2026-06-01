@@ -76,13 +76,6 @@ function saveMetadata(metadata: Metadata): void {
 }
 
 /**
- * Clear metadata cache (used for testing)
- */
-export function clearMetadataCache(): void {
-    cachedMetadata = null;
-}
-
-/**
  * Get or create metadata
  * Creates new metadata on first run, updates currentVersion on subsequent runs
  */

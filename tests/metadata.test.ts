@@ -18,9 +18,18 @@ jest.mock('os', () => {
 });
 
 // Import after mocking
-import { getMetadata, updateLatestVersion, getCachedLatestVersion, clearMetadataCache } from '../src/utils/metadata';
+let getMetadata: typeof import('../src/utils/metadata').getMetadata;
+let updateLatestVersion: typeof import('../src/utils/metadata').updateLatestVersion;
+let getCachedLatestVersion: typeof import('../src/utils/metadata').getCachedLatestVersion;
 
 describe('Metadata Utilities', () => {
+    beforeEach(async () => {
+        jest.resetModules();
+        const mod = await import('../src/utils/metadata');
+        getMetadata = mod.getMetadata;
+        updateLatestVersion = mod.updateLatestVersion;
+        getCachedLatestVersion = mod.getCachedLatestVersion;
+    });
     beforeEach(() => {
         // Create test directory
         if (!existsSync(TEST_DIR)) {
@@ -43,7 +52,6 @@ describe('Metadata Utilities', () => {
         } catch {
             // Ignore cleanup errors
         }
-        clearMetadataCache();
     });
 
     afterAll(() => {
@@ -57,7 +65,6 @@ describe('Metadata Utilities', () => {
 
     describe('ensureMetadataDir error handling', () => {
         it('should handle ensureMetadataDir errors gracefully', () => {
-            clearMetadataCache();
             const adapterDir = join(TEST_DIR, '.claude-adapter');
             if (existsSync(adapterDir)) {
                 rmSync(adapterDir, { recursive: true });
@@ -70,7 +77,6 @@ describe('Metadata Utilities', () => {
 
     describe('loadMetadata error handling', () => {
         it('should handle read errors gracefully', () => {
-            clearMetadataCache();
             // Create an invalid JSON file to trigger a parse error
             const metadataPath = join(TEST_DIR, '.claude-adapter', 'metadata.json');
             writeFileSync(metadataPath, 'invalid-json');
@@ -81,7 +87,6 @@ describe('Metadata Utilities', () => {
 
     describe('saveMetadata error handling', () => {
         it('should handle write errors gracefully', () => {
-            clearMetadataCache();
             getMetadata(); // Create a valid cache first
             const metadataPath = join(TEST_DIR, '.claude-adapter', 'metadata.json');
             // Replace file with directory to trigger write error
@@ -94,7 +99,6 @@ describe('Metadata Utilities', () => {
 
     describe('updateLatestVersion error handling', () => {
         it('should handle loadMetadata errors gracefully during updateLatestVersion', () => {
-            clearMetadataCache();
             const metadataPath = join(TEST_DIR, '.claude-adapter', 'metadata.json');
             writeFileSync(metadataPath, 'invalid-json');
             updateLatestVersion('3.0.0');
@@ -103,7 +107,6 @@ describe('Metadata Utilities', () => {
 
     describe('getCachedLatestVersion error handling', () => {
         it('should handle loadMetadata errors gracefully during getCachedLatestVersion', () => {
-            clearMetadataCache();
             const metadataPath = join(TEST_DIR, '.claude-adapter', 'metadata.json');
             writeFileSync(metadataPath, 'invalid-json');
             expect(getCachedLatestVersion()).toBeNull();
@@ -147,7 +150,6 @@ describe('Metadata Utilities', () => {
 
     describe('getCachedLatestVersion', () => {
         it('should return null if no version cached', () => {
-            clearMetadataCache();
             const metadataPath = join(TEST_DIR, '.claude-adapter', 'metadata.json');
             if (existsSync(metadataPath)) {
                 rmSync(metadataPath);
