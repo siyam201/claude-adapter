@@ -3,6 +3,7 @@ import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { AdapterConfig } from '../types/config';
 import { createMessagesHandler } from './handlers';
 import { logger } from '../utils/logger';
+import 'dotenv/config';
 
 export interface ProxyServer {
     app: FastifyInstance;
