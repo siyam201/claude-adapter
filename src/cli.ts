@@ -2,6 +2,7 @@
 // CLI entry point for claude-adapter
 import { Command } from 'commander';
 import inquirer from 'inquirer';
+import 'dotenv/config';
 import { AdapterConfig } from './types/config';
 import {
     loadConfig,
